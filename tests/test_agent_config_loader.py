@@ -39,6 +39,13 @@ def test_field_repr():
     assert "5" in repr(f)
 
 
+def test_field_repr_required():
+    f = field(int)
+    r = repr(f)
+    assert "int" in r
+    assert "required" in r
+
+
 # ---------------------------------------------------------------------------
 # ConfigField.coerce
 # ---------------------------------------------------------------------------
@@ -104,6 +111,23 @@ def test_config_load_error_both():
 def test_config_load_error_is_value_error():
     err = ConfigLoadError(missing=["x"])
     assert isinstance(err, ValueError)
+
+
+def test_config_load_error_empty_has_default_message():
+    err = ConfigLoadError()
+    assert err.missing == []
+    assert err.bad_types == {}
+    assert str(err) == "Config load error."
+
+
+def test_config_load_error_copies_inputs():
+    missing = ["a"]
+    bad = {"b": "bad"}
+    err = ConfigLoadError(missing=missing, bad_types=bad)
+    missing.append("c")
+    bad["d"] = "also-bad"
+    assert err.missing == ["a"]
+    assert err.bad_types == {"b": "bad"}
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +228,16 @@ def test_from_env_bad_type_and_missing_together():
     assert "port" in exc_info.value.bad_types
 
 
+def test_from_env_required_field_with_bad_value_is_bad_type_not_missing():
+    # A required field whose value is present but uncoercible is a coercion
+    # failure, not a missing field.
+    schema = {"port": field(int)}
+    with pytest.raises(ConfigLoadError) as exc_info:
+        AgentConfig.from_env(schema, env={"PORT": "notanint"})
+    assert exc_info.value.missing == []
+    assert exc_info.value.bad_types == {"port": "notanint"}
+
+
 # ---------------------------------------------------------------------------
 # AgentConfig access
 # ---------------------------------------------------------------------------
@@ -296,6 +330,20 @@ def test_help_shows_defaults():
     assert "claude" in cfg.help()
 
 
+def test_help_shows_description_and_type():
+    schema = {"max_tokens": field(int, 1024, description="Max output tokens")}
+    cfg = AgentConfig.from_env(schema, env={})
+    h = cfg.help()
+    assert "Max output tokens" in h
+    assert "int" in h
+
+
+def test_help_omits_description_when_absent():
+    schema = {"model": field(str, "claude")}
+    cfg = AgentConfig.from_env(schema, env={})
+    assert "—" not in cfg.help()
+
+
 # ---------------------------------------------------------------------------
 # schema_for
 # ---------------------------------------------------------------------------
@@ -328,3 +376,31 @@ def test_full_schema():
     assert cfg["temperature"] == pytest.approx(0.7)
     assert cfg["verbose"] is True
     assert cfg["api_key"] == "sk-abc"
+
+
+# ---------------------------------------------------------------------------
+# from_env — default environment (os.environ)
+# ---------------------------------------------------------------------------
+
+
+def test_from_env_reads_os_environ_when_env_is_none(monkeypatch):
+    monkeypatch.setenv("MODEL", "from-os-environ")
+    schema = {"model": field(str, "default")}
+    cfg = AgentConfig.from_env(schema)
+    assert cfg["model"] == "from-os-environ"
+
+
+# ---------------------------------------------------------------------------
+# Package exports
+# ---------------------------------------------------------------------------
+
+
+def test_public_api_exports():
+    import agent_config_loader
+
+    assert set(agent_config_loader.__all__) == {
+        "AgentConfig",
+        "ConfigField",
+        "ConfigLoadError",
+        "field",
+    }
